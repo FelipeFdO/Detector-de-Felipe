@@ -103,7 +103,33 @@ def run_on_image(image_path: Path, bundle: dict, detector, recognizer) -> None:
     cv2.destroyAllWindows()
 
 
-def run_webcam(camera_index: int, bundle: dict, detector, recognizer) -> None:
+def detect_faces_scaled(
+    frame: np.ndarray,
+    detector: cv2.FaceDetectorYN,
+    max_det_width: int = 480,
+) -> np.ndarray:
+    h, w = frame.shape[:2]
+    if w <= max_det_width:
+        return detect_faces(frame, detector)
+
+    scale = max_det_width / float(w)
+    small = cv2.resize(frame, (max_det_width, int(h * scale)), interpolation=cv2.INTER_LINEAR)
+    faces = detect_faces(small, detector)
+    if len(faces) > 0:
+        faces = faces.copy()
+        # Escala bbox (0:4) e landmarks (4:14) de volta ao frame original; mantém score (14)
+        faces[:, :14] /= scale
+    return faces
+
+
+def run_webcam(
+    camera_index: int,
+    bundle: dict,
+    detector,
+    recognizer,
+    width: int = 640,
+    height: int = 480,
+) -> None:
     cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
     if not cap.isOpened():
         cap = cv2.VideoCapture(camera_index)
@@ -113,8 +139,10 @@ def run_webcam(camera_index: int, bundle: dict, detector, recognizer) -> None:
             "Verifique se a webcam está conectada e não está em uso por outro app."
         )
 
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+    cap.set(cv2.CAP_PROP_FPS, 30)
 
     print("Câmera iniciada! Pressione 'q' ou 'ESC' na janela para sair.")
     prev_time = time.perf_counter()
@@ -130,7 +158,7 @@ def run_webcam(camera_index: int, bundle: dict, detector, recognizer) -> None:
             # Espelha horizontalmente para parecer um espelho natural
             frame = cv2.flip(frame, 1)
 
-            faces = detect_faces(frame, detector)
+            faces = detect_faces_scaled(frame, detector)
             for face in faces:
                 is_felipe, prob, cos_sim = classify_face(frame, face, recognizer, bundle)
                 draw_prediction(frame, face, is_felipe, prob, cos_sim)
@@ -166,6 +194,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Identificador de Felipe via webcam ou imagem.")
     parser.add_argument("--camera", type=int, default=0, help="Índice da câmera (padrão: 0)")
     parser.add_argument("--image", type=Path, default=None, help="Caminho de uma imagem para testar")
+    parser.add_argument("--width", type=int, default=640, help="Largura da câmera (padrão: 640)")
+    parser.add_argument("--height", type=int, default=480, help="Altura da câmera (padrão: 480)")
     args = parser.parse_args()
 
     if not CLASSIFIER_PATH.exists():
@@ -180,7 +210,7 @@ def main() -> None:
     if args.image is not None:
         run_on_image(args.image, bundle, detector, recognizer)
     else:
-        run_webcam(args.camera, bundle, detector, recognizer)
+        run_webcam(args.camera, bundle, detector, recognizer, width=args.width, height=args.height)
 
 
 if __name__ == "__main__":
